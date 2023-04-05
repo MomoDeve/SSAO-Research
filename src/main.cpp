@@ -1,15 +1,39 @@
 #include <iostream>
+#include <filesystem>
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
 #include <SDL.h>
 #include <SDL_syswm.h>
 
+// Define these only in *one* .cc file.
+#define TINYGLTF_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+// #define TINYGLTF_NOEXCEPTION // optional. disable exception handling.
+#include <tiny_gltf.h>
+
 SDL_Window* window = nullptr;
 const int WIDTH = 1024;
 const int HEIGHT = 600;
 
-int main(int argc, char* args[]) {
+struct Mesh {
 
+};
+
+tinygltf::Model loadModel(tinygltf::TinyGLTF& loader, const std::string& path)
+{  
+   tinygltf::Model model;
+   std::string errorMsg, warnMsg;
+   loader.LoadASCIIFromFile(&model, &errorMsg, &warnMsg, path);
+   if (!errorMsg.empty())
+       std::cerr << errorMsg << std::endl;
+   return model;
+}
+
+int main(int argc, char* args[]) {
+    if (std::filesystem::exists(APPLICATION_WORKING_DIRECTORY))
+        std::filesystem::current_path(APPLICATION_WORKING_DIRECTORY);
+    
     // Initialize SDL systems
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         std::cout << "SDL could not initialize! SDL_Error : " << SDL_GetError();
@@ -85,6 +109,10 @@ int main(int argc, char* args[]) {
 
     // Enable debug text.
     bgfx::setDebug(BGFX_DEBUG_TEXT /*| BGFX_DEBUG_STATS*/);
+
+    tinygltf::TinyGLTF loader;
+    auto model = loadModel(loader, "models/Sponza/glTF/Sponza.gltf");
+
 
     // Set view rectangle for 0th view
     bgfx::setViewRect(0, 0, 0, uint16_t(WIDTH), uint16_t(HEIGHT));

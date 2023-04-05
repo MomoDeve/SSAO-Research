@@ -4,3 +4,6 @@
 [submodule "submodules/SDL2"]
 	path = submodules/SDL2
 	url = https://github.com/libsdl-org/SDL
+[submodule "submodules/tinygltf"]
+	path = submodules/tinygltf
+	url = https://github.com/syoyo/tinygltf
