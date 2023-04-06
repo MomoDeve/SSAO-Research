@@ -22,8 +22,8 @@ void renderFullScreen();
 void renderCube();
 
 // settings
-const unsigned int SCR_WIDTH = 800;
-const unsigned int SCR_HEIGHT = 600;
+const unsigned int SCR_WIDTH = 1600;
+const unsigned int SCR_HEIGHT = 900;
 
 // camera
 Camera camera(glm::vec3(0.0f, 8.0f, 3.0f));
@@ -59,6 +59,7 @@ int main()
     // glfw: initialize and configure
     // ------------------------------
     glfwInit();
+    glfwWindowHint(GLFW_RESIZABLE, false);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -77,7 +78,6 @@ int main()
         return -1;
     }
     glfwMakeContextCurrent(window);
-    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetCursorPosCallback(window, mouse_callback);
     glfwSetScrollCallback(window, scroll_callback);
 
@@ -260,7 +260,7 @@ int main()
             shaderGeometryPass.setInt("invertedNormals", 1); // invert normals as we're inside the cube
             renderCube();
             shaderGeometryPass.setInt("invertedNormals", 0); 
-            // models on the floor
+            // models renderer (we dont care about instancing as we measuring screen space ssao afterwards)
             for (int i = 0; i < 3; i++)
             {
                 float xOffset[] = {-3.0f, 0.0f, 3.0f};
