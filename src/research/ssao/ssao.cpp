@@ -18,7 +18,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 void processInput(GLFWwindow *window);
 unsigned int loadTexture(const char *path, bool gammaCorrection);
-void renderQuad();
+void renderFullScreen();
 void renderCube();
 
 // settings
@@ -38,6 +38,20 @@ float lastFrame = 0.0f;
 float ourLerp(float a, float b, float f)
 {
     return a + f * (b - a);
+}
+
+void openglMessageCallback(
+    GLenum source,
+    GLenum type,
+    GLuint id,
+    GLenum severity,
+    GLsizei length,
+    const GLchar* message,
+    const void* userParam)
+{
+    fprintf(stderr, "GL CALLBACK: %s type = 0x%x, severity = 0x%x, message = %s\n",
+        (type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : ""),
+        type, severity, message);
 }
 
 int main()
@@ -82,6 +96,9 @@ int main()
     // -----------------------------
     glEnable(GL_DEPTH_TEST);
 
+    glEnable(GL_DEBUG_OUTPUT);
+    glDebugMessageCallback(openglMessageCallback, 0);
+
     // build and compile shaders
     // -------------------------
     Shader shaderGeometryPass("ssao_geometry.vs", "ssao_geometry.fs");
@@ -98,16 +115,14 @@ int main()
     unsigned int gBuffer;
     glGenFramebuffers(1, &gBuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, gBuffer);
-    unsigned int gPosition, gNormal, gAlbedo;
-    // position color buffer
-    glGenTextures(1, &gPosition);
-    glBindTexture(GL_TEXTURE_2D, gPosition);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGBA, GL_FLOAT, NULL);
+    unsigned int gAlbedo, gNormal, gDepth;
+    // color + specular color buffer
+    glGenTextures(1, &gAlbedo);
+    glBindTexture(GL_TEXTURE_2D, gAlbedo);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gPosition, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gAlbedo, 0);
     // normal color buffer
     glGenTextures(1, &gNormal);
     glBindTexture(GL_TEXTURE_2D, gNormal);
@@ -115,22 +130,16 @@ int main()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, gNormal, 0);
-    // color + specular color buffer
-    glGenTextures(1, &gAlbedo);
-    glBindTexture(GL_TEXTURE_2D, gAlbedo);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    // depth buffer
+    glGenTextures(1, &gDepth);
+    glBindTexture(GL_TEXTURE_2D, gDepth);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SCR_WIDTH, SCR_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, gAlbedo, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, gDepth, 0);
     // tell OpenGL which color attachments we'll use (of this framebuffer) for rendering 
-    unsigned int attachments[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
-    glDrawBuffers(3, attachments);
-    // create and attach depth buffer (renderbuffer)
-    unsigned int rboDepth;
-    glGenRenderbuffers(1, &rboDepth);
-    glBindRenderbuffer(GL_RENDERBUFFER, rboDepth);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, SCR_WIDTH, SCR_HEIGHT);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rboDepth);
+    unsigned int attachments[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+    glDrawBuffers(std::size(attachments), attachments);
     // finally check if framebuffer is complete
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cout << "Framebuffer not complete!" << std::endl;
@@ -197,20 +206,16 @@ int main()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
-    // lighting info
-    // -------------
-    glm::vec3 lightPos = glm::vec3(0.0, 5.0, 0.0);
-    glm::vec3 lightColor = glm::vec3(0.7, 0.7, 0.7);
 
     // shader configuration
     // --------------------
     shaderLightingPass.use();
-    shaderLightingPass.setInt("gPosition", 0);
-    shaderLightingPass.setInt("gNormal", 1);
-    shaderLightingPass.setInt("gAlbedo", 2);
+    shaderLightingPass.setInt("gDepth", 0);
+    shaderLightingPass.setInt("gAlbedo", 1);
+    shaderLightingPass.setInt("gNormal", 2);
     shaderLightingPass.setInt("ssao", 3);
     shaderSSAO.use();
-    shaderSSAO.setInt("gPosition", 0);
+    shaderSSAO.setInt("gDepth", 0);
     shaderSSAO.setInt("gNormal", 1);
     shaderSSAO.setInt("texNoise", 2);
     shaderSSAOBlur.use();
@@ -242,6 +247,8 @@ int main()
             glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 50.0f);
             glm::mat4 view = camera.GetViewMatrix();
             glm::mat4 model = glm::mat4(1.0f);
+            glm::mat4 viewProj = projection * view;
+            glm::mat4 invViewProj = glm::inverse(viewProj);
             shaderGeometryPass.use();
             shaderGeometryPass.setMat4("projection", projection);
             shaderGeometryPass.setMat4("view", view);
@@ -275,14 +282,15 @@ int main()
             // Send kernel + rotation 
             for (unsigned int i = 0; i < 64; ++i)
                 shaderSSAO.setVec3("samples[" + std::to_string(i) + "]", ssaoKernel[i]);
-            shaderSSAO.setMat4("projection", projection);
+            shaderSSAO.setMat4("viewProj", viewProj);
+            shaderSSAO.setMat4("invViewProj", invViewProj);
             glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, gPosition);
+            glBindTexture(GL_TEXTURE_2D, gDepth);
             glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_2D, gNormal);
             glActiveTexture(GL_TEXTURE2);
             glBindTexture(GL_TEXTURE_2D, noiseTexture);
-            renderQuad();
+            renderFullScreen();
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 
@@ -293,32 +301,25 @@ int main()
             shaderSSAOBlur.use();
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, ssaoColorBuffer);
-            renderQuad();
+            renderFullScreen();
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 
-        // 4. lighting pass: traditional deferred Blinn-Phong lighting with added screen-space ambient occlusion
+        // 4. finilize
         // -----------------------------------------------------------------------------------------------------
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         shaderLightingPass.use();
-        // send light relevant uniforms
-        glm::vec3 lightPosView = glm::vec3(camera.GetViewMatrix() * glm::vec4(lightPos, 1.0));
-        shaderLightingPass.setVec3("light.Position", lightPosView);
-        shaderLightingPass.setVec3("light.Color", lightColor);
-        // Update attenuation parameters
-        const float linear    = 0.09f;
-        const float quadratic = 0.032f;
-        shaderLightingPass.setFloat("light.Linear", linear);
-        shaderLightingPass.setFloat("light.Quadratic", quadratic);
+        shaderLightingPass.setMat4("invViewProj", invViewProj);
+        shaderLightingPass.setVec3("viewPos", camera.Position);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, gPosition);
+        glBindTexture(GL_TEXTURE_2D, gDepth);
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, gNormal);
-        glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, gAlbedo);
-        glActiveTexture(GL_TEXTURE3); // add extra SSAO texture to lighting pass
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, gNormal);
+        glActiveTexture(GL_TEXTURE3);
         glBindTexture(GL_TEXTURE_2D, ssaoColorBufferBlur);
-        renderQuad();
+        renderFullScreen();
 
 
         // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
@@ -406,35 +407,16 @@ void renderCube()
     glBindVertexArray(0);
 }
 
-
-// renderQuad() renders a 1x1 XY quad in NDC
-// -----------------------------------------
-unsigned int quadVAO = 0;
-unsigned int quadVBO;
-void renderQuad()
+unsigned int dummyVAO = 0;
+void renderFullScreen()
 {
-    if (quadVAO == 0)
+    if (dummyVAO == 0)
     {
-        float quadVertices[] = {
-            // positions        // texture Coords
-            -1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
-            -1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
-             1.0f,  1.0f, 0.0f, 1.0f, 1.0f,
-             1.0f, -1.0f, 0.0f, 1.0f, 0.0f,
-        };
-        // setup plane VAO
-        glGenVertexArrays(1, &quadVAO);
-        glGenBuffers(1, &quadVBO);
-        glBindVertexArray(quadVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+        glGenVertexArrays(1, &dummyVAO);
     }
-    glBindVertexArray(quadVAO);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    // do not bind anything, vertices are generated in vertex shader
+    glBindVertexArray(dummyVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
 }
 
