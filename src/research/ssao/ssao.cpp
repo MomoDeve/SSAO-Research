@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/random.hpp>
 
 #include <learnopengl/filesystem.h>
 #include <learnopengl/shader.h>
@@ -21,22 +22,103 @@ void renderFullScreen();
 void renderCube();
 
 // settings
-const unsigned int SCR_WIDTH = 1600;
-const unsigned int SCR_HEIGHT = 900;
+const unsigned int SRC_WIDTH = 1600;
+const unsigned int SRC_HEIGHT = 900;
+
+const unsigned int HBAO_RES_RATIO = 2;
+const float HBAO_RADIUS = 0.2f;
+const float HBAO_MAX_RADIUS_PIXELS = 50.0f;
+const unsigned int HBAO_DIRS = 6;
+const unsigned int HBAO_SAMPLES = 3;
+
+const float CAMERA_NEAR_PLANE = 0.1f;
+const float CAMERA_FAR_PLANE = 50.0f;
+
+const int NOISE_TEXTURE_RES = 4;
 
 // camera
 Camera camera(glm::vec3(0.0f, 8.0f, 3.0f));
-float lastX = (float)SCR_WIDTH / 2.0;
-float lastY = (float)SCR_HEIGHT / 2.0;
+float lastX = (float)SRC_WIDTH / 2.0;
+float lastY = (float)SRC_HEIGHT / 2.0;
 bool firstMouse = true;
 
 // timing
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 
+enum class RenderMode {
+    NONE,
+    SSAO,
+    HBAO,
+};
+RenderMode renderMode = RenderMode::SSAO;
+bool enableBlur = true;
+
 float ourLerp(float a, float b, float f)
 {
     return a + f * (b - a);
+}
+
+unsigned int getSSAONoiseTexture()
+{
+    std::vector<glm::vec3> ssaoNoise;
+    for (unsigned int i = 0; i < NOISE_TEXTURE_RES * NOISE_TEXTURE_RES; i++)
+    {
+        glm::vec3 noise(glm::linearRand(0.0f, 1.0f) * 2.0 - 1.0, glm::linearRand(0.0f, 1.0f) * 2.0 - 1.0, 0.0f); // rotate around z-axis (in tangent space)
+        ssaoNoise.push_back(noise);
+    }
+
+    unsigned int noiseTexture;
+    glGenTextures(1, &noiseTexture);
+    glBindTexture(GL_TEXTURE_2D, noiseTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, NOISE_TEXTURE_RES, NOISE_TEXTURE_RES, 0, GL_RGB, GL_FLOAT, ssaoNoise.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    return noiseTexture;
+}
+
+unsigned int getHBAONoiseTexture()
+{
+    std::vector<glm::vec4> noise;
+    for (int y = 0; y < NOISE_TEXTURE_RES; y++)
+    {
+        for (int x = 0; x < NOISE_TEXTURE_RES; x++)
+        {
+            glm::vec2 xy = glm::circularRand(1.0f);
+            float z = glm::linearRand(0.0f, 1.0f);
+            float w = glm::linearRand(0.0f, 1.0f);
+            noise.push_back(glm::vec4(xy, z, w));
+        }
+    }
+       
+    unsigned int noiseTexture;
+    glGenTextures(1, &noiseTexture);
+    glBindTexture(GL_TEXTURE_2D, noiseTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, NOISE_TEXTURE_RES, NOISE_TEXTURE_RES, 0, GL_RGBA, GL_FLOAT, noise.data());
+    
+    return noiseTexture;
+}
+
+unsigned int getEmptyAOTexture()
+{
+    float data[] = { 1.0f, 1.0f };
+    unsigned int texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, 1, 1, 0, GL_RG, GL_FLOAT, data);
+
+    return texture;
 }
 
 void openglMessageCallback(
@@ -48,9 +130,7 @@ void openglMessageCallback(
     const GLchar* message,
     const void* userParam)
 {
-    fprintf(stderr, "GL CALLBACK: %s type = 0x%x, severity = 0x%x, message = %s\n",
-        (type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : ""),
-        type, severity, message);
+    __debugbreak();
 }
 
 int main()
@@ -69,7 +149,7 @@ int main()
 
     // glfw window creation
     // --------------------
-    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Research", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(SRC_WIDTH, SRC_HEIGHT, "Research", NULL, NULL);
     if (window == NULL)
     {
         std::cout << "Failed to create GLFW window" << std::endl;
@@ -100,10 +180,11 @@ int main()
 
     // build and compile shaders
     // -------------------------
-    Shader shaderGeometryPass("ssao_geometry.vs", "ssao_geometry.fs");
-    Shader shaderLightingPass("ssao.vs", "ssao_lighting.fs");
-    Shader shaderSSAO("ssao.vs", "ssao.fs");
-    Shader shaderSSAOBlur("ssao.vs", "ssao_blur.fs");
+    Shader shaderGeometryPass("geometry.vs", "geometry.fs");
+    Shader shaderLightingPass("fullscreen.vs", "lighting.fs");
+    Shader shaderSSAO("fullscreen.vs", "ssao.fs");
+    Shader shaderHBAO("fullscreen.vs", "hbao.fs");
+    Shader shaderBoxBlur("fullscreen.vs", "box_blur.fs");
 
     // load models
     // -----------
@@ -118,21 +199,21 @@ int main()
     // color + specular color buffer
     glGenTextures(1, &gAlbedo);
     glBindTexture(GL_TEXTURE_2D, gAlbedo);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SRC_WIDTH, SRC_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gAlbedo, 0);
     // normal color buffer
     glGenTextures(1, &gNormal);
     glBindTexture(GL_TEXTURE_2D, gNormal);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGBA, GL_FLOAT, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, SRC_WIDTH, SRC_HEIGHT, 0, GL_RGBA, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, gNormal, 0);
     // depth buffer
     glGenTextures(1, &gDepth);
     glBindTexture(GL_TEXTURE_2D, gDepth);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SCR_WIDTH, SCR_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SRC_WIDTH, SRC_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, gDepth, 0);
@@ -147,13 +228,14 @@ int main()
     // also create framebuffer to hold SSAO processing stage 
     // -----------------------------------------------------
     unsigned int ssaoFBO, ssaoBlurFBO;
-    glGenFramebuffers(1, &ssaoFBO);  glGenFramebuffers(1, &ssaoBlurFBO);
+    glGenFramebuffers(1, &ssaoFBO);  
+    glGenFramebuffers(1, &ssaoBlurFBO);
     glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
     unsigned int ssaoColorBuffer, ssaoColorBufferBlur;
     // SSAO color buffer
     glGenTextures(1, &ssaoColorBuffer);
     glBindTexture(GL_TEXTURE_2D, ssaoColorBuffer);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, SCR_WIDTH, SCR_HEIGHT, 0, GL_RED, GL_FLOAT, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, SRC_WIDTH, SRC_HEIGHT, 0, GL_RG, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoColorBuffer, 0);
@@ -163,7 +245,7 @@ int main()
     glBindFramebuffer(GL_FRAMEBUFFER, ssaoBlurFBO);
     glGenTextures(1, &ssaoColorBufferBlur);
     glBindTexture(GL_TEXTURE_2D, ssaoColorBufferBlur);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, SCR_WIDTH, SCR_HEIGHT, 0, GL_RED, GL_FLOAT, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, SRC_WIDTH, SRC_HEIGHT, 0, GL_RG, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoColorBufferBlur, 0);
@@ -176,12 +258,13 @@ int main()
     std::uniform_real_distribution<GLfloat> randomFloats(0.0, 1.0); // generates random floats between 0.0 and 1.0
     std::default_random_engine generator;
     std::vector<glm::vec3> ssaoKernel;
-    for (unsigned int i = 0; i < 64; ++i)
+    int kernelSize = 16;
+    for (unsigned int i = 0; i < kernelSize; ++i)
     {
         glm::vec3 sample(randomFloats(generator) * 2.0 - 1.0, randomFloats(generator) * 2.0 - 1.0, randomFloats(generator));
         sample = glm::normalize(sample);
         sample *= randomFloats(generator);
-        float scale = float(i) / 64.0f;
+        float scale = float(i) / kernelSize;
 
         // scale samples s.t. they're more aligned to center of kernel
         scale = ourLerp(0.1f, 1.0f, scale * scale);
@@ -189,36 +272,57 @@ int main()
         ssaoKernel.push_back(sample);
     }
 
-    // generate noise texture
-    // ----------------------
-    std::vector<glm::vec3> ssaoNoise;
-    for (unsigned int i = 0; i < 16; i++)
-    {
-        glm::vec3 noise(randomFloats(generator) * 2.0 - 1.0, randomFloats(generator) * 2.0 - 1.0, 0.0f); // rotate around z-axis (in tangent space)
-        ssaoNoise.push_back(noise);
-    }
-    unsigned int noiseTexture; glGenTextures(1, &noiseTexture);
-    glBindTexture(GL_TEXTURE_2D, noiseTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, 4, 0, GL_RGB, GL_FLOAT, &ssaoNoise[0]);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
+    unsigned int ssaoNoiseTexture = getSSAONoiseTexture();
+    unsigned int hbaoNoiseTexture = getHBAONoiseTexture();
+    unsigned int emptyAOTexture = getEmptyAOTexture();
 
     // shader configuration
     // --------------------
     shaderLightingPass.use();
-    shaderLightingPass.setInt("gDepth", 0);
-    shaderLightingPass.setInt("gAlbedo", 1);
-    shaderLightingPass.setInt("gNormal", 2);
-    shaderLightingPass.setInt("ssao", 3);
+    shaderLightingPass.setInt("gAlbedo", 0);
+    shaderLightingPass.setInt("gNormal", 1);
+    shaderLightingPass.setInt("ao", 2);
+
     shaderSSAO.use();
     shaderSSAO.setInt("gDepth", 0);
     shaderSSAO.setInt("gNormal", 1);
     shaderSSAO.setInt("texNoise", 2);
-    shaderSSAOBlur.use();
-    shaderSSAOBlur.setInt("ssaoInput", 0);
+
+
+    float fovRad = glm::radians(camera.Zoom);
+    glm::vec2 FocalLen, InvFocalLen, UVToViewA, UVToViewB, LinMAD;
+
+    FocalLen[0] = 1.0f / tanf(fovRad * 0.5f) * ((float)SRC_HEIGHT / (float)SRC_WIDTH);
+    FocalLen[1] = 1.0f / tanf(fovRad * 0.5f);
+    InvFocalLen[0] = 1.0f / FocalLen[0];
+    InvFocalLen[1] = 1.0f / FocalLen[1];
+
+    UVToViewA[0] = -2.0f * InvFocalLen[0];
+    UVToViewA[1] = -2.0f * InvFocalLen[1];
+    UVToViewB[0] = 1.0f * InvFocalLen[0];
+    UVToViewB[1] = 1.0f * InvFocalLen[1];
+
+    LinMAD[0] = (CAMERA_NEAR_PLANE - CAMERA_FAR_PLANE) / (2.0f * CAMERA_NEAR_PLANE * CAMERA_FAR_PLANE);
+    LinMAD[1] = (CAMERA_NEAR_PLANE + CAMERA_FAR_PLANE) / (2.0f * CAMERA_NEAR_PLANE * CAMERA_FAR_PLANE);
+    shaderHBAO.use();
+    shaderHBAO.setVec2("FocalLen", FocalLen);
+    shaderHBAO.setVec2("UVToViewA", UVToViewA);
+    shaderHBAO.setVec2("UVToViewB", UVToViewB);
+    shaderHBAO.setVec2("LinMAD", LinMAD);
+    shaderHBAO.setVec2("AORes", glm::vec2(SRC_WIDTH, SRC_HEIGHT));
+    shaderHBAO.setVec2("InvAORes", glm::vec2(1.0f / SRC_WIDTH, 1.0f / SRC_HEIGHT));
+    shaderHBAO.setFloat("R", HBAO_RADIUS);
+    shaderHBAO.setFloat("R2", HBAO_RADIUS * HBAO_RADIUS);
+    shaderHBAO.setFloat("NegInvR2", -1.0f / (HBAO_RADIUS * HBAO_RADIUS));
+    shaderHBAO.setFloat("MaxRadiusPixels", HBAO_MAX_RADIUS_PIXELS);
+    shaderHBAO.setVec2("NoiseScale", glm::vec2((float)SRC_WIDTH / NOISE_TEXTURE_RES, (float)SRC_HEIGHT / NOISE_TEXTURE_RES));
+    shaderHBAO.setInt("NumDirections", HBAO_DIRS);
+    shaderHBAO.setInt("NumSamples", HBAO_SAMPLES);
+    shaderHBAO.setInt("gDepth", 0);
+    shaderHBAO.setInt("texNoise", 1);
+
+    shaderBoxBlur.use();
+    shaderBoxBlur.setInt("ssaoInput", 0);
 
     // render loop
     // -----------
@@ -243,11 +347,10 @@ int main()
         // -----------------------------------------------------------------
         glBindFramebuffer(GL_FRAMEBUFFER, gBuffer);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 50.0f);
+            glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SRC_WIDTH / (float)SRC_HEIGHT, CAMERA_NEAR_PLANE, CAMERA_FAR_PLANE);
             glm::mat4 view = camera.GetViewMatrix();
             glm::mat4 model = glm::mat4(1.0f);
-            glm::mat4 viewProj = projection * view;
-            glm::mat4 invViewProj = glm::inverse(viewProj);
+            glm::mat4 invProjection = glm::inverse(projection);
             shaderGeometryPass.use();
             shaderGeometryPass.setMat4("projection", projection);
             shaderGeometryPass.setMat4("view", view);
@@ -264,7 +367,7 @@ int main()
             {
                 float xOffset[] = {-3.0f, 0.0f, 3.0f};
                 model = glm::mat4(1.0f);
-                model = glm::translate(model, glm::vec3(xOffset[i], 0.0f, 3.0));
+                model = glm::translate(model, glm::vec3(xOffset[i], -0.2f, 3.0));
                 model = glm::rotate(model, glm::radians(-90.0f), glm::vec3(1.0, 0.0, 0.0));
                 model = glm::scale(model, glm::vec3(0.3f));
                 shaderGeometryPass.setMat4("model", model);
@@ -273,51 +376,64 @@ int main()
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 
-        // 2. generate SSAO texture
-        // ------------------------
-        glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
+        if (renderMode == RenderMode::SSAO)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
             glClear(GL_COLOR_BUFFER_BIT);
             shaderSSAO.use();
-            // Send kernel + rotation 
-            for (unsigned int i = 0; i < 64; ++i)
+            for (unsigned int i = 0; i < kernelSize; ++i)
                 shaderSSAO.setVec3("samples[" + std::to_string(i) + "]", ssaoKernel[i]);
-            shaderSSAO.setMat4("viewProj", viewProj);
-            shaderSSAO.setMat4("invViewProj", invViewProj);
+            shaderSSAO.setMat4("proj", projection);
+            shaderSSAO.setMat4("invProj", invProjection);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, gDepth);
             glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_2D, gNormal);
             glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_2D, noiseTexture);
+            glBindTexture(GL_TEXTURE_2D, ssaoNoiseTexture);
             renderFullScreen();
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-
-        // 3. blur SSAO texture to remove noise
-        // ------------------------------------
-        glBindFramebuffer(GL_FRAMEBUFFER, ssaoBlurFBO);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+        if (renderMode == RenderMode::HBAO)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
             glClear(GL_COLOR_BUFFER_BIT);
-            shaderSSAOBlur.use();
+            shaderHBAO.use();
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, gDepth);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, hbaoNoiseTexture);
+            renderFullScreen();
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+
+
+        if (enableBlur)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, ssaoBlurFBO);
+            glClear(GL_COLOR_BUFFER_BIT);
+            shaderBoxBlur.use();
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, ssaoColorBuffer);
             renderFullScreen();
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
 
 
-        // 4. finilize
-        // -----------------------------------------------------------------------------------------------------
+        // finilize to output
+        bool hasAO = renderMode != RenderMode::NONE;
+        unsigned int aoTexture = hasAO ?
+            (enableBlur ? ssaoColorBufferBlur : ssaoColorBuffer) :
+            emptyAOTexture;
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         shaderLightingPass.use();
-        shaderLightingPass.setMat4("invViewProj", invViewProj);
-        shaderLightingPass.setVec3("viewPos", camera.Position);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, gDepth);
-        glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, gAlbedo);
-        glActiveTexture(GL_TEXTURE2);
+        glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, gNormal);
-        glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, ssaoColorBufferBlur);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, aoTexture);
         renderFullScreen();
 
 
@@ -434,6 +550,16 @@ void processInput(GLFWwindow *window)
         camera.ProcessKeyboard(LEFT, deltaTime);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         camera.ProcessKeyboard(RIGHT, deltaTime);
+
+    if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS)
+        enableBlur = !enableBlur;
+
+    if (glfwGetKey(window, GLFW_KEY_0) == GLFW_PRESS)
+        renderMode = RenderMode::NONE;
+    if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS)
+        renderMode = RenderMode::SSAO;
+    if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS)
+        renderMode = RenderMode::HBAO;
 }
 
 // glfw: whenever the mouse moves, this callback is called

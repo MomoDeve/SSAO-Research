@@ -3,7 +3,7 @@
 layout (location = 0) out vec3 gAlbedo;
 layout (location = 1) out vec3 gNormal;
 
-in vec2 TexCoords;
+in vec2 TexCoord;
 in vec3 Normal;
 
 void main()

@@ -113,10 +113,7 @@ function(create_project_from_sources chapter demo)
     # copy shader files to build directory
     file(GLOB SHADERS
              "src/${chapter}/${demo}/*.vs"
-             # "src/${chapter}/${demo}/*.frag"
              "src/${chapter}/${demo}/*.fs"
-             "src/${chapter}/${demo}/*.gs"
-	     "src/${chapter}/${demo}/*.cs"
     )
 	# copy dlls
 	file(GLOB DLLS "dlls/*.dll")
