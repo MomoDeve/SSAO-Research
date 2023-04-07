@@ -25,8 +25,11 @@ void renderCube();
 const unsigned int SRC_WIDTH = 1600;
 const unsigned int SRC_HEIGHT = 900;
 
-const unsigned int HBAO_RES_RATIO = 2;
-const float HBAO_RADIUS = 0.2f;
+const float SSAO_SAMPLE_RADIUS = 0.5f;
+const float SSAO_SAMPLE_BIAS = 0.025f;
+const float SSAO_DEPTH_RANGE_CLAMP = 0.2f;
+
+const float HBAO_SAMPLE_RADIUS = 0.2f;
 const float HBAO_MAX_RADIUS_PIXELS = 50.0f;
 const unsigned int HBAO_DIRS = 6;
 const unsigned int HBAO_SAMPLES = 3;
@@ -54,7 +57,7 @@ enum class RenderMode {
 RenderMode renderMode = RenderMode::SSAO;
 bool enableBlur = true;
 
-float ourLerp(float a, float b, float f)
+float lerp(float a, float b, float f)
 {
     return a + f * (b - a);
 }
@@ -266,8 +269,7 @@ int main()
         sample *= randomFloats(generator);
         float scale = float(i) / kernelSize;
 
-        // scale samples s.t. they're more aligned to center of kernel
-        scale = ourLerp(0.1f, 1.0f, scale * scale);
+        scale = lerp(0.1f, 1.0f, scale * scale);
         sample *= scale;
         ssaoKernel.push_back(sample);
     }
@@ -284,6 +286,9 @@ int main()
     shaderLightingPass.setInt("ao", 2);
 
     shaderSSAO.use();
+    shaderSSAO.setFloat("sampleRadius", SSAO_SAMPLE_RADIUS);
+    shaderSSAO.setFloat("bias", SSAO_SAMPLE_BIAS);
+    shaderSSAO.setFloat("depthRangeClamp", SSAO_DEPTH_RANGE_CLAMP);
     shaderSSAO.setInt("gDepth", 0);
     shaderSSAO.setInt("gNormal", 1);
     shaderSSAO.setInt("texNoise", 2);
@@ -311,9 +316,9 @@ int main()
     shaderHBAO.setVec2("LinMAD", LinMAD);
     shaderHBAO.setVec2("AORes", glm::vec2(SRC_WIDTH, SRC_HEIGHT));
     shaderHBAO.setVec2("InvAORes", glm::vec2(1.0f / SRC_WIDTH, 1.0f / SRC_HEIGHT));
-    shaderHBAO.setFloat("R", HBAO_RADIUS);
-    shaderHBAO.setFloat("R2", HBAO_RADIUS * HBAO_RADIUS);
-    shaderHBAO.setFloat("NegInvR2", -1.0f / (HBAO_RADIUS * HBAO_RADIUS));
+    shaderHBAO.setFloat("R", HBAO_SAMPLE_RADIUS);
+    shaderHBAO.setFloat("R2", HBAO_SAMPLE_RADIUS * HBAO_SAMPLE_RADIUS);
+    shaderHBAO.setFloat("NegInvR2", -1.0f / (HBAO_SAMPLE_RADIUS * HBAO_SAMPLE_RADIUS));
     shaderHBAO.setFloat("MaxRadiusPixels", HBAO_MAX_RADIUS_PIXELS);
     shaderHBAO.setVec2("NoiseScale", glm::vec2((float)SRC_WIDTH / NOISE_TEXTURE_RES, (float)SRC_HEIGHT / NOISE_TEXTURE_RES));
     shaderHBAO.setInt("NumDirections", HBAO_DIRS);

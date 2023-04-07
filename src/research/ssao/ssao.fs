@@ -10,10 +10,11 @@ uniform sampler2D texNoise;
 
 uniform vec3 samples[16];
 
+uniform float sampleRadius = 0.5;
+uniform float depthRangeClamp = 0.2;
+uniform float bias = 0.025;
+
 const int kernelSize = 16;
-const float sampleRadius = 0.5;
-const float depthRangeClamp = 0.2;
-const float bias = 0.025;
 
 const float SCREEN_WIDTH = 1600;
 const float SCREEN_HEIGHT = 900;
