@@ -12,7 +12,7 @@ vec3 lightInvDirection = vec3(0, 1, 0);
 void main()
 {             
     // retrieve data from gbuffer
-    vec3 Normal = 2.0 * texture(gNormal, TexCoord).rgb - 1.0;
+    vec3 Normal = texture(gNormal, TexCoord).rgb;
     vec3 Diffuse = texture(gAlbedo, TexCoord).rgb;
     float AmbientOcclusion = texture(ao, TexCoord).r;
     

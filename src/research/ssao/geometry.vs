@@ -4,6 +4,7 @@ layout (location = 1) in vec3 aNormal;
 
 out vec2 TexCoord;
 out vec3 Normal;
+out vec3 Position;
 
 uniform bool invertedNormals;
 
@@ -18,5 +19,6 @@ void main()
     mat3 normalMatrix = transpose(inverse(mat3(model)));
     Normal = normalize(normalMatrix * (invertedNormals ? -aNormal : aNormal));
     
+    Position = viewPos.xyz;
     gl_Position = projection * viewPos;
 }

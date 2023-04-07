@@ -32,7 +32,7 @@ vec3 reconstructPosition(float z, vec2 texcoords)
 
 mat3 computeTBN(vec3 normal)
 {
-    vec3 randomVec = 2.0 * normalize(texture(texNoise, TexCoord * noiseScale).xyz) - 1.0;
+    vec3 randomVec = texture(texNoise, TexCoord * noiseScale).xyz;
 
     vec3 tangent = cross(randomVec, normal);
     vec3 bitangent = cross(normal, tangent);
@@ -54,7 +54,7 @@ void main()
     vec3 fragPos = reconstructPosition(fragDepth, TexCoord);
     vec3 normal = 2.0 * texture(gNormal, TexCoord).rgb - 1.0;
     mat3 TBN = computeTBN(normal);
-
+    
     float occlusion = 0.0;
     for(int i = 0; i < kernelSize; ++i)
     {
@@ -65,13 +65,11 @@ void main()
 
         float sampleDepth = texture(gDepth, offset.xy).r;
         vec3 sampleFragPos = reconstructPosition(sampleDepth, offset.xy);
-
-        float offscreenFading = 1.0 - dot(TexCoord - 0.5, TexCoord - 0.5);
-        offscreenFading *= offscreenFading;
         
         float rangeCheck = smoothstep(0.0, 1.0, depthRangeClamp / abs(fragPos.z - sampleFragPos.z));
-        occlusion += (sampleFragPos.z >=fragPos.z + bias ? 1.0 : 0.0) * rangeCheck * offscreenFading;           
+        occlusion += (sampleFragPos.z >=fragPos.z + bias ? 1.0 : 0.0) * rangeCheck;           
     }
+
     occlusion = 1.0 - (occlusion / kernelSize);
     
     FragColor = occlusion;

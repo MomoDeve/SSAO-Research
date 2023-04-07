@@ -72,7 +72,7 @@ unsigned int getSSAONoiseTexture()
     for (int i = 0; i < NOISE_TEXTURE_RES * NOISE_TEXTURE_RES; i++)
     {
         glm::vec3 noise(glm::linearRand(0.0f, 1.0f) * 2.0 - 1.0, glm::linearRand(0.0f, 1.0f) * 2.0 - 1.0, 0.0f); // rotate around z-axis (in tangent space)
-        ssaoNoise.push_back(noise);
+        ssaoNoise.push_back(glm::normalize(noise));
     }
 
     unsigned int noiseTexture;
@@ -165,7 +165,8 @@ void openglMessageCallback(
     const GLchar* message,
     const void* userParam)
 {
-    __debugbreak();
+    if (severity == GL_DEBUG_SEVERITY_HIGH)
+        __debugbreak();
 }
 
 int main()
@@ -231,7 +232,7 @@ int main()
     unsigned int gBuffer;
     glGenFramebuffers(1, &gBuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, gBuffer);
-    unsigned int gAlbedo, gNormal, gDepth;
+    unsigned int gAlbedo, gNormal, gGTAODepth, gDepth;
     // color + specular color buffer
     glGenTextures(1, &gAlbedo);
     glBindTexture(GL_TEXTURE_2D, gAlbedo);
@@ -246,6 +247,13 @@ int main()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, gNormal, 0);
+    // gtao depth buffer
+    glGenTextures(1, &gGTAODepth);
+    glBindTexture(GL_TEXTURE_2D, gGTAODepth);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, SRC_WIDTH, SRC_HEIGHT, 0, GL_RED, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, gGTAODepth, 0);
     // depth buffer
     glGenTextures(1, &gDepth);
     glBindTexture(GL_TEXTURE_2D, gDepth);
@@ -254,7 +262,7 @@ int main()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, gDepth, 0);
     // tell OpenGL which color attachments we'll use (of this framebuffer) for rendering 
-    unsigned int attachments[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+    unsigned int attachments[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
     glDrawBuffers(std::size(attachments), attachments);
     // finally check if framebuffer is complete
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
@@ -319,18 +327,37 @@ int main()
     shaderLightingPass.setInt("gNormal", 1);
     shaderLightingPass.setInt("ao", 2);
 
+    float fovRad = glm::radians(camera.Zoom);
+
+    glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SRC_WIDTH / (float)SRC_HEIGHT, CAMERA_NEAR_PLANE, CAMERA_FAR_PLANE);
+    glm::mat4 invProjection = glm::inverse(projection);
+    glm::vec4 projInfo = glm::vec4(
+        2.0f / (SRC_WIDTH * projection[0][0]),
+        2.0f / (SRC_HEIGHT * projection[1][1]),
+        -1.0f / projection[0][0],
+        -1.0f / projection[1][1]
+    );
+    glm::vec4 clipInfo = glm::vec4(
+        CAMERA_NEAR_PLANE,
+        CAMERA_FAR_PLANE,
+        0.5f * (SRC_HEIGHT / (2.0f * tanf(fovRad * 0.5f))),
+        0.0f
+    );
+
+    shaderGeometryPass.use();
+    shaderGeometryPass.setVec4("clipInfo", clipInfo);
+
     shaderSSAO.use();
     shaderSSAO.setFloat("sampleRadius", SSAO_SAMPLE_RADIUS);
     shaderSSAO.setFloat("bias", SSAO_SAMPLE_BIAS);
     shaderSSAO.setFloat("depthRangeClamp", SSAO_DEPTH_RANGE_CLAMP);
+    shaderSSAO.setMat4("proj", projection);
+    shaderSSAO.setMat4("invProj", invProjection);
     shaderSSAO.setInt("gDepth", 0);
     shaderSSAO.setInt("gNormal", 1);
     shaderSSAO.setInt("texNoise", 2);
 
-
-    float fovRad = glm::radians(camera.Zoom);
     glm::vec2 FocalLen, InvFocalLen, UVToViewA, UVToViewB, LinMAD;
-
     FocalLen[0] = 1.0f / tanf(fovRad * 0.5f) * ((float)SRC_HEIGHT / (float)SRC_WIDTH);
     FocalLen[1] = 1.0f / tanf(fovRad * 0.5f);
     InvFocalLen[0] = 1.0f / FocalLen[0];
@@ -362,6 +389,8 @@ int main()
 
     int gtaoSampleIndex = 0;
     shaderGTAO.use();
+    shaderGTAO.setVec4("clipInfo", clipInfo);
+    shaderGTAO.setVec4("projInfo", projInfo);
     shaderGTAO.setInt("gDepth", 0);
     shaderGTAO.setInt("gNormal", 1);
     shaderGTAO.setInt("texNoise", 2);
@@ -392,11 +421,9 @@ int main()
         // -----------------------------------------------------------------
         glBindFramebuffer(GL_FRAMEBUFFER, gBuffer);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SRC_WIDTH / (float)SRC_HEIGHT, CAMERA_NEAR_PLANE, CAMERA_FAR_PLANE);
             glm::mat4 view = camera.GetViewMatrix();
-            glm::mat4 model = glm::mat4(1.0f);
-            glm::mat4 invProjection = glm::inverse(projection);
             glm::mat4 invView = glm::inverse(view);
+            glm::mat4 model = glm::mat4(1.0f);
             shaderGeometryPass.use();
             shaderGeometryPass.setMat4("projection", projection);
             shaderGeometryPass.setMat4("view", view);
@@ -429,8 +456,6 @@ int main()
             shaderSSAO.use();
             for (unsigned int i = 0; i < kernelSize; ++i)
                 shaderSSAO.setVec3("samples[" + std::to_string(i) + "]", ssaoKernel[i]);
-            shaderSSAO.setMat4("proj", projection);
-            shaderSSAO.setMat4("invProj", invProjection);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, gDepth);
             glActiveTexture(GL_TEXTURE1);
@@ -454,32 +479,17 @@ int main()
         }
         if (renderMode == RenderMode::GTAO)
         {
-            glm::vec4 projInfo = glm::vec4(
-                2.0f / (SRC_WIDTH * projection[0][0]),
-                2.0f / (SRC_HEIGHT * projection[1][1]),
-                -1.0f / projection[0][0],
-                -1.0f / projection[1][1]
-            );
             glm::vec2 params = glm::vec2(
                 GTAO_ROTATIONS[gtaoSampleIndex % 6] / 360.0f,
                 GTAO_OFFSETS[(gtaoSampleIndex / 6) % 4]
             );
-            glm::vec4 clipInfo = glm::vec4(
-                CAMERA_NEAR_PLANE,
-                CAMERA_FAR_PLANE,
-                0.5f * (SRC_HEIGHT / (2.0f * tanf(fovRad * 0.5f))),
-                0.0f
-            );
-
             glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
             glClear(GL_COLOR_BUFFER_BIT);
             shaderGTAO.use();
-            shaderGTAO.setVec4("projInfo", projInfo);
-            shaderGTAO.setVec4("clipInfo", clipInfo);
             shaderGTAO.setVec2("params", params);
             shaderGTAO.setMat4("invView", invView);
             glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, gDepth);
+            glBindTexture(GL_TEXTURE_2D, gGTAODepth);
             glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_2D, gNormal);
             glActiveTexture(GL_TEXTURE2);

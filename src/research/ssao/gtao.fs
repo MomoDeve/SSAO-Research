@@ -9,7 +9,7 @@
 
 #define NUM_DIRECTIONS	6
 #define NUM_STEPS		4
-#define RADIUS			2.0		// in world space
+#define RADIUS			0.2		// in world space
 
 uniform sampler2D gDepth;
 uniform sampler2D gNormal;
@@ -20,9 +20,11 @@ uniform vec4 clipInfo;
 uniform vec2 params;
 uniform mat4 invView;
 
+in vec2 TexCoord;
+
 out float FragColor;
 
-vec4 GetViewPosition(vec2 uv, float currstep)
+vec4 GetViewPosition(vec2 uv)
 {
 	vec2 basesize = vec2(textureSize(gDepth, 0));
 	vec2 coord = (uv / basesize);
@@ -36,13 +38,27 @@ vec4 GetViewPosition(vec2 uv, float currstep)
 	return ret;
 }
 
+#define FALLOFF_START2	0.01
+#define FALLOFF_END2	0.5
+float Falloff(float dist2, float cosh)
+{
+	return 2.0 * clamp((dist2 - FALLOFF_START2) / (FALLOFF_END2 - FALLOFF_START2), 0.0, 1.0);
+}
+
+
 void main()
 {
 	ivec2 loc = ivec2(gl_FragCoord.xy);
-	vec4 vpos = GetViewPosition(gl_FragCoord.xy, 1.0);
+	vec4 vpos = GetViewPosition(gl_FragCoord.xy);
+
+	if (vpos.w == 1.0) 
+	{
+		FragColor = 1.0;
+		return;
+	}
 
 	vec4 s;
-	vec3 vnorm	= 2.0 * texelFetch(gNormal, loc, 0).rgb - 1.0;
+	vec3 vnorm	= texelFetch(gNormal, loc, 0).rgb;
 	vec3 vdir	= normalize(-vpos.xyz);
 	vec3 dir, ws;
 
@@ -76,24 +92,26 @@ void main()
 			offset = round(dir.xy * currstep);
 
 			// h1
-			s = GetViewPosition(gl_FragCoord.xy + offset, currstep);
+			s = GetViewPosition(gl_FragCoord.xy + offset);
 			ws = s.xyz - vpos.xyz;
 
 			dist2 = dot(ws, ws);
 			invdist = inversesqrt(dist2);
 			cosh = invdist * dot(ws, vdir);
 
-			horizons.x = max(horizons.x, cosh);
+			falloff = Falloff(dist2, cosh);
+			horizons.x = max(horizons.x, cosh - falloff);
 
 			// h2
-			s = GetViewPosition(gl_FragCoord.xy - offset, currstep);
+			s = GetViewPosition(gl_FragCoord.xy - offset);
 			ws = s.xyz - vpos.xyz;
 
 			dist2 = dot(ws, ws);
 			invdist = inversesqrt(dist2);
 			cosh = invdist * dot(ws, vdir);
 
-			horizons.y = max(horizons.y, cosh);
+			falloff = Falloff(dist2, cosh);
+			horizons.y = max(horizons.y, cosh - falloff);
 
 			// increment
 			currstep += stepsize;
