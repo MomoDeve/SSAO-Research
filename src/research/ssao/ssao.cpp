@@ -50,7 +50,7 @@ bool firstMouse = true;
 
 // timing
 float deltaTime = 0.0f;
-float lastFrame = 0.0f;
+float lastFrame = -1.0f;
 
 enum class RenderMode {
     NONE,
@@ -58,8 +58,33 @@ enum class RenderMode {
     HBAO,
     GTAO,
 };
+
+std::string getRenderModeName(RenderMode mode)
+{
+    switch (mode)
+    {
+    case RenderMode::NONE:
+        return "none";
+    case RenderMode::SSAO:
+        return "ssao";
+    case RenderMode::HBAO:
+        return "hbao";
+    case RenderMode::GTAO:
+        return "gtao";
+    default:
+        return "none";
+    }
+}
+
 RenderMode renderMode = RenderMode::SSAO;
 bool enableBlur = true;
+bool inRecordMode = false;
+
+struct RecordFrame
+{
+    double aoTimeMs;
+    double blurTimeMs;
+};
 
 float lerp(float a, float b, float f)
 {
@@ -206,6 +231,12 @@ int main()
         std::cout << "Failed to initialize GLAD" << std::endl;
         return -1;
     }
+
+    std::cout << "context initialized!\n";
+    std::cout << "WASD - navigate, ESC - exit\n";
+    std::cout << "0 (NONE), 1 (SSAO), 2 (HBAO), 3 (GTAO) - switch modes\n";
+    std::cout << "B - enable/disable blur\n";
+    std::cout << "R - start recording, T - stop recording. output file: record_{mode}.txt\n";
 
     // configure global opengl state
     // -----------------------------
@@ -398,8 +429,20 @@ int main()
     shaderBoxBlur.use();
     shaderBoxBlur.setInt("ssaoInput", 0);
 
+    // timers initialization
+    // ---------------------
+    unsigned int queries[3];
+    const int QUERY_AO_START = 0;
+    const int QUERY_AO_END = 1;
+    const int QUERY_AO_BLUR_END = 2;
+    glGenQueries(std::size(queries), queries);
+    float timeAccumulated = 0.0f;
+
+    std::vector<RecordFrame> recordFrames;
+
     // render loop
     // -----------
+    lastFrame = static_cast<float>(glfwGetTime());
     while (!glfwWindowShouldClose(window))
     {
         // per-frame time logic
@@ -407,6 +450,56 @@ int main()
         float currentFrame = static_cast<float>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
+
+        timeAccumulated += deltaTime;
+        if (inRecordMode && timeAccumulated > 0.2f)
+        {
+            uint64_t timestamps[std::size(queries)];
+            for (int i = 0; i < std::size(queries); i++)
+            {
+                glGetQueryObjectui64v(queries[i], GL_QUERY_RESULT, &timestamps[i]);
+            }
+
+            double aoTimeMs = (timestamps[QUERY_AO_END] - timestamps[QUERY_AO_START]) / 1000000.0;
+            double blurTimeMs = (timestamps[QUERY_AO_BLUR_END] - timestamps[QUERY_AO_END]) / 1000000.0;
+            printf("ao(ms): %f, blur(ms): %f\n", aoTimeMs, blurTimeMs);
+            recordFrames.push_back({ aoTimeMs, blurTimeMs });
+
+            timeAccumulated = 0.0f;
+        }
+        if (!inRecordMode && !recordFrames.empty())
+        {
+            auto renderModeName = getRenderModeName(renderMode);
+            std::ofstream report("report_" + renderModeName + ".txt");
+            auto aoTimeLimits = std::minmax_element(recordFrames.begin(), recordFrames.end(), 
+                [](auto& f1, auto& f2) { return f1.aoTimeMs < f2.aoTimeMs; });
+            auto blurTimeLimits = std::minmax_element(recordFrames.begin(), recordFrames.end(),
+                [](auto& f1, auto& f2) { return f1.blurTimeMs < f2.blurTimeMs; });
+
+            double aoTimeAverage = 0.0f, blurTimeAverage = 0.0f;
+            for (const auto& frame : recordFrames)
+            {
+                aoTimeAverage += frame.aoTimeMs;
+                blurTimeAverage += frame.blurTimeMs;
+            }
+            aoTimeAverage /= recordFrames.size();
+            blurTimeAverage /= recordFrames.size();
+
+            report << "render mode: " << renderModeName << "\n";
+
+            report << "ao \n";
+            report << "  avg time (ms): " << aoTimeAverage << "\n";
+            report << "  min time (ms): " << aoTimeLimits.first->aoTimeMs << "\n";
+            report << "  max time (ms): " << aoTimeLimits.second->aoTimeMs << "\n";
+
+            report << "blur \n";
+            report << "  avg time (ms): " << blurTimeAverage << "\n";
+            report << "  min time (ms): " << blurTimeLimits.first->blurTimeMs << "\n";
+            report << "  max time (ms): " << blurTimeLimits.second->blurTimeMs << "\n";
+
+            report.close();
+            recordFrames.clear();
+        }
 
         // input
         // -----
@@ -448,33 +541,33 @@ int main()
             }
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-
+        glQueryCounter(queries[QUERY_AO_START], GL_TIMESTAMP);
         if (renderMode == RenderMode::SSAO)
         {
             glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
-            glClear(GL_COLOR_BUFFER_BIT);
-            shaderSSAO.use();
-            for (unsigned int i = 0; i < kernelSize; ++i)
-                shaderSSAO.setVec3("samples[" + std::to_string(i) + "]", ssaoKernel[i]);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, gDepth);
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, gNormal);
-            glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_2D, ssaoNoiseTexture);
-            renderFullScreen();
+                glClear(GL_COLOR_BUFFER_BIT);
+                shaderSSAO.use();
+                for (unsigned int i = 0; i < kernelSize; ++i)
+                    shaderSSAO.setVec3("samples[" + std::to_string(i) + "]", ssaoKernel[i]);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, gDepth);
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, gNormal);
+                glActiveTexture(GL_TEXTURE2);
+                glBindTexture(GL_TEXTURE_2D, ssaoNoiseTexture);
+                renderFullScreen();
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
         if (renderMode == RenderMode::HBAO)
         {
             glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
-            glClear(GL_COLOR_BUFFER_BIT);
-            shaderHBAO.use();
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, gDepth);
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, hbaoNoiseTexture);
-            renderFullScreen();
+                glClear(GL_COLOR_BUFFER_BIT);
+                shaderHBAO.use();
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, gDepth);
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, hbaoNoiseTexture);
+                renderFullScreen();
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
         if (renderMode == RenderMode::GTAO)
@@ -484,22 +577,22 @@ int main()
                 GTAO_OFFSETS[(gtaoSampleIndex / 6) % 4]
             );
             glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
-            glClear(GL_COLOR_BUFFER_BIT);
-            shaderGTAO.use();
-            shaderGTAO.setVec2("params", params);
-            shaderGTAO.setMat4("invView", invView);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, gGTAODepth);
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, gNormal);
-            glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_2D, gtaoNoiseTexture);
-            renderFullScreen();
+                glClear(GL_COLOR_BUFFER_BIT);
+                shaderGTAO.use();
+                shaderGTAO.setVec2("params", params);
+                shaderGTAO.setMat4("invView", invView);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, gGTAODepth);
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, gNormal);
+                glActiveTexture(GL_TEXTURE2);
+                glBindTexture(GL_TEXTURE_2D, gtaoNoiseTexture);
+                renderFullScreen();
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
             gtaoSampleIndex = (gtaoSampleIndex + 1) % 24;
         }
-
+        glQueryCounter(queries[QUERY_AO_END], GL_TIMESTAMP);
 
         if (enableBlur)
         {
@@ -511,6 +604,7 @@ int main()
             renderFullScreen();
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
+        glQueryCounter(queries[QUERY_AO_BLUR_END], GL_TIMESTAMP);
 
 
         // finilize to output
@@ -646,6 +740,11 @@ void processInput(GLFWwindow *window)
 
     if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS)
         enableBlur = !enableBlur;
+
+    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)
+        inRecordMode = true;
+    if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS)
+        inRecordMode = false;
 
     if (glfwGetKey(window, GLFW_KEY_0) == GLFW_PRESS)
         renderMode = RenderMode::NONE;
