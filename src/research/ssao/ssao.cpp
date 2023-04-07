@@ -484,16 +484,27 @@ int main()
             }
             aoTimeAverage /= recordFrames.size();
             blurTimeAverage /= recordFrames.size();
+            
+            double aoTimeDeviation = 0.0f, blurTimeDeviation = 0.0f;
+            for (const auto& frame : recordFrames)
+            {
+                aoTimeDeviation += (frame.aoTimeMs - aoTimeAverage) * (frame.aoTimeMs - aoTimeAverage);
+                blurTimeDeviation += (frame.blurTimeMs - blurTimeAverage) * (frame.blurTimeMs - blurTimeAverage);
+            }
+            aoTimeDeviation = sqrt(aoTimeDeviation / recordFrames.size());
+            blurTimeDeviation = sqrt(blurTimeDeviation / recordFrames.size());
 
             report << "render mode: " << renderModeName << "\n";
 
             report << "ao \n";
             report << "  avg time (ms): " << aoTimeAverage << "\n";
+            report << "  dev time (ms): " << aoTimeDeviation << "\n";
             report << "  min time (ms): " << aoTimeLimits.first->aoTimeMs << "\n";
             report << "  max time (ms): " << aoTimeLimits.second->aoTimeMs << "\n";
 
             report << "blur \n";
             report << "  avg time (ms): " << blurTimeAverage << "\n";
+            report << "  dev time (ms): " << blurTimeDeviation << "\n";
             report << "  min time (ms): " << blurTimeLimits.first->blurTimeMs << "\n";
             report << "  max time (ms): " << blurTimeLimits.second->blurTimeMs << "\n";
 
