@@ -34,6 +34,9 @@ const float HBAO_MAX_RADIUS_PIXELS = 50.0f;
 const unsigned int HBAO_DIRS = 6;
 const unsigned int HBAO_SAMPLES = 3;
 
+const float GTAO_ROTATIONS[6] = { 60.0f, 300.0f, 180.0f, 240.0f, 120.0f, 0.0f };
+const float GTAO_OFFSETS[4] = { 0.0f, 0.5f, 0.25f, 0.75f };
+
 const float CAMERA_NEAR_PLANE = 0.1f;
 const float CAMERA_FAR_PLANE = 50.0f;
 
@@ -53,6 +56,7 @@ enum class RenderMode {
     NONE,
     SSAO,
     HBAO,
+    GTAO,
 };
 RenderMode renderMode = RenderMode::SSAO;
 bool enableBlur = true;
@@ -65,7 +69,7 @@ float lerp(float a, float b, float f)
 unsigned int getSSAONoiseTexture()
 {
     std::vector<glm::vec3> ssaoNoise;
-    for (unsigned int i = 0; i < NOISE_TEXTURE_RES * NOISE_TEXTURE_RES; i++)
+    for (int i = 0; i < NOISE_TEXTURE_RES * NOISE_TEXTURE_RES; i++)
     {
         glm::vec3 noise(glm::linearRand(0.0f, 1.0f) * 2.0 - 1.0, glm::linearRand(0.0f, 1.0f) * 2.0 - 1.0, 0.0f); // rotate around z-axis (in tangent space)
         ssaoNoise.push_back(noise);
@@ -74,7 +78,7 @@ unsigned int getSSAONoiseTexture()
     unsigned int noiseTexture;
     glGenTextures(1, &noiseTexture);
     glBindTexture(GL_TEXTURE_2D, noiseTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, NOISE_TEXTURE_RES, NOISE_TEXTURE_RES, 0, GL_RGB, GL_FLOAT, ssaoNoise.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, NOISE_TEXTURE_RES, NOISE_TEXTURE_RES, 0, GL_RGB, GL_FLOAT, ssaoNoise.data());
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -106,6 +110,34 @@ unsigned int getHBAONoiseTexture()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, NOISE_TEXTURE_RES, NOISE_TEXTURE_RES, 0, GL_RGBA, GL_FLOAT, noise.data());
     
+    return noiseTexture;
+}
+
+unsigned int getGTAONoiseTexture()
+{
+    const int BYTES_PER_PIXEL = 2;
+    uint8_t noise[NOISE_TEXTURE_RES * NOISE_TEXTURE_RES * BYTES_PER_PIXEL];
+    for (uint8_t i = 0; i < NOISE_TEXTURE_RES; i++) 
+    {
+        for (uint8_t j = 0; j < NOISE_TEXTURE_RES; j++) 
+        {
+            float dirnoise = 0.0625f * ((((i + j) & 0x3) << 2) + (i & 0x3));
+            float offnoise = 0.25f * ((j - i) & 0x3);
+
+            noise[(i * NOISE_TEXTURE_RES + j) * BYTES_PER_PIXEL + 0] = (uint8_t)(dirnoise * 255.0f);
+            noise[(i * NOISE_TEXTURE_RES + j) * BYTES_PER_PIXEL + 1] = (uint8_t)(offnoise * 255.0f);
+        }
+    }
+
+    unsigned int noiseTexture;
+    glGenTextures(1, &noiseTexture);
+    glBindTexture(GL_TEXTURE_2D, noiseTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, NOISE_TEXTURE_RES, NOISE_TEXTURE_RES, 0, GL_RG, GL_UNSIGNED_BYTE, noise);
+
     return noiseTexture;
 }
 
@@ -187,6 +219,7 @@ int main()
     Shader shaderLightingPass("fullscreen.vs", "lighting.fs");
     Shader shaderSSAO("fullscreen.vs", "ssao.fs");
     Shader shaderHBAO("fullscreen.vs", "hbao.fs");
+    Shader shaderGTAO("fullscreen.vs", "gtao.fs");
     Shader shaderBoxBlur("fullscreen.vs", "box_blur.fs");
 
     // load models
@@ -276,6 +309,7 @@ int main()
 
     unsigned int ssaoNoiseTexture = getSSAONoiseTexture();
     unsigned int hbaoNoiseTexture = getHBAONoiseTexture();
+    unsigned int gtaoNoiseTexture = getGTAONoiseTexture();
     unsigned int emptyAOTexture = getEmptyAOTexture();
 
     // shader configuration
@@ -326,6 +360,12 @@ int main()
     shaderHBAO.setInt("gDepth", 0);
     shaderHBAO.setInt("texNoise", 1);
 
+    int gtaoSampleIndex = 0;
+    shaderGTAO.use();
+    shaderGTAO.setInt("gDepth", 0);
+    shaderGTAO.setInt("gNormal", 1);
+    shaderGTAO.setInt("texNoise", 2);
+
     shaderBoxBlur.use();
     shaderBoxBlur.setInt("ssaoInput", 0);
 
@@ -356,6 +396,7 @@ int main()
             glm::mat4 view = camera.GetViewMatrix();
             glm::mat4 model = glm::mat4(1.0f);
             glm::mat4 invProjection = glm::inverse(projection);
+            glm::mat4 invView = glm::inverse(view);
             shaderGeometryPass.use();
             shaderGeometryPass.setMat4("projection", projection);
             shaderGeometryPass.setMat4("view", view);
@@ -410,6 +451,43 @@ int main()
             glBindTexture(GL_TEXTURE_2D, hbaoNoiseTexture);
             renderFullScreen();
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+        if (renderMode == RenderMode::GTAO)
+        {
+            glm::vec4 projInfo = glm::vec4(
+                2.0f / (SRC_WIDTH * projection[0][0]),
+                2.0f / (SRC_HEIGHT * projection[1][1]),
+                -1.0f / projection[0][0],
+                -1.0f / projection[1][1]
+            );
+            glm::vec2 params = glm::vec2(
+                GTAO_ROTATIONS[gtaoSampleIndex % 6] / 360.0f,
+                GTAO_OFFSETS[(gtaoSampleIndex / 6) % 4]
+            );
+            glm::vec4 clipInfo = glm::vec4(
+                CAMERA_NEAR_PLANE,
+                CAMERA_FAR_PLANE,
+                0.5f * (SRC_HEIGHT / (2.0f * tanf(fovRad * 0.5f))),
+                0.0f
+            );
+
+            glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
+            glClear(GL_COLOR_BUFFER_BIT);
+            shaderGTAO.use();
+            shaderGTAO.setVec4("projInfo", projInfo);
+            shaderGTAO.setVec4("clipInfo", clipInfo);
+            shaderGTAO.setVec2("params", params);
+            shaderGTAO.setMat4("invView", invView);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, gDepth);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, gNormal);
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, gtaoNoiseTexture);
+            renderFullScreen();
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+            gtaoSampleIndex = (gtaoSampleIndex + 1) % 24;
         }
 
 
@@ -565,6 +643,8 @@ void processInput(GLFWwindow *window)
         renderMode = RenderMode::SSAO;
     if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS)
         renderMode = RenderMode::HBAO;
+    if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS)
+        renderMode = RenderMode::GTAO;
 }
 
 // glfw: whenever the mouse moves, this callback is called
