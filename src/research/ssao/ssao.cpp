@@ -27,12 +27,11 @@ const unsigned int SRC_HEIGHT = 900;
 
 const float SSAO_SAMPLE_RADIUS = 0.5f;
 const float SSAO_SAMPLE_BIAS = 0.025f;
-const float SSAO_DEPTH_RANGE_CLAMP = 0.2f;
 
-const float HBAO_SAMPLE_RADIUS = 0.2f;
+const float HBAO_SAMPLE_RADIUS = 0.4f;
 const float HBAO_MAX_RADIUS_PIXELS = 50.0f;
-const unsigned int HBAO_DIRS = 6;
-const unsigned int HBAO_SAMPLES = 3;
+const unsigned int HBAO_DIRS = 8;
+const unsigned int HBAO_SAMPLES = 4;
 
 const float GTAO_ROTATIONS[6] = { 60.0f, 300.0f, 180.0f, 240.0f, 120.0f, 0.0f };
 const float GTAO_OFFSETS[4] = { 0.0f, 0.5f, 0.25f, 0.75f };
@@ -381,7 +380,6 @@ int main()
     shaderSSAO.use();
     shaderSSAO.setFloat("sampleRadius", SSAO_SAMPLE_RADIUS);
     shaderSSAO.setFloat("bias", SSAO_SAMPLE_BIAS);
-    shaderSSAO.setFloat("depthRangeClamp", SSAO_DEPTH_RANGE_CLAMP);
     shaderSSAO.setMat4("proj", projection);
     shaderSSAO.setMat4("invProj", invProjection);
     shaderSSAO.setInt("gDepth", 0);

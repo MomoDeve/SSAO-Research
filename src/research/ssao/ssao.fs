@@ -11,8 +11,9 @@ uniform sampler2D texNoise;
 uniform vec3 samples[16];
 
 uniform float sampleRadius = 0.5;
-uniform float depthRangeClamp = 0.2;
 uniform float bias = 0.025;
+
+const float DEPTH_RANGE_MAX = 0.02;
 
 const int kernelSize = 16;
 
@@ -66,8 +67,8 @@ void main()
         float sampleDepth = texture(gDepth, offset.xy).r;
         vec3 sampleFragPos = reconstructPosition(sampleDepth, offset.xy);
         
-        float rangeCheck = smoothstep(0.0, 1.0, depthRangeClamp / abs(fragPos.z - sampleFragPos.z));
-        occlusion += (sampleFragPos.z >=fragPos.z + bias ? 1.0 : 0.0) * rangeCheck;           
+        float rangeCheck = step(1.0, dot(samplePos - fragPos, samplePos - fragPos) / DEPTH_RANGE_MAX);
+        occlusion += (sampleFragPos.z >= fragPos.z + bias ? 1.0 : 0.0) * rangeCheck;  
     }
 
     occlusion = 1.0 - (occlusion / kernelSize);

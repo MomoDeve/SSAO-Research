@@ -7,7 +7,7 @@
 #define HALF_PI			1.5707963267948966
 #define ONE_OVER_PI		0.3183098861837906
 
-#define NUM_DIRECTIONS	6
+#define NUM_DIRECTIONS	8
 #define NUM_STEPS		4
 #define RADIUS			0.2		// in world space
 
@@ -77,12 +77,12 @@ void main()
 	float phi		= 0.0;
 	float ao		= 0.0;
 	float division	= noises.y * stepsize;
-	float currstep	= 1.0 + division + 0.25 * stepsize * params.y;
+	float currstep	= 1.0;
 	float dist2, invdist, falloff, cosh;
 
 	for (int k = 0; k < NUM_DIRECTIONS; ++k) {
 		phi = float(k) * (PI / NUM_DIRECTIONS);
-		currstep = 1.0;
+		currstep = 1.0 + division + 0.25 * stepsize * params.y;
 
 		dir = vec3(cos(phi), sin(phi), 0.0);
 		horizons = vec2(-1.0);

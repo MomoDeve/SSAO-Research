@@ -2,7 +2,10 @@
 
 This is research project of multiple SSAO Algorithms.
 
-Base template was taken from [learnopengl](https://learnopengl.com) 
+## Special credit:
+- [JoeyDeVries LearnOpenGL](https://github.com/JoeyDeVries/LearnOpenGL) - base application template
+- [scanberg HBAO](https://github.com/scanberg/hbao) - base for HBAO shader (with reference check according to the original paper)
+- [asylum2010 GTAO](https://github.com/asylum2010/Asylum_Tutorials) - base for GTAO shader (with reference check according to the original paper)
 
 ## Building
 

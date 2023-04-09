@@ -26,7 +26,7 @@ uniform float NegInvR2 = - 1.0 / (0.3*0.3);
 uniform float TanBias = tan(30.0 * PI / 180.0);
 uniform float MaxRadiusPixels = 100.0;
 
-uniform int NumDirections = 6;
+uniform int NumDirections = 8;
 uniform int NumSamples = 4;
 
 in vec2 TexCoord;
