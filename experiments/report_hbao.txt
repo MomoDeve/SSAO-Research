@@ -1,0 +1,11 @@
+render mode: hbao
+ao 
+  avg time (ms): 0.536412
+  dev time (ms): 0.00541855
+  min time (ms): 0.515392
+  max time (ms): 0.58816
+blur 
+  avg time (ms): 0.104912
+  dev time (ms): 0.00212581
+  min time (ms): 0.099328
+  max time (ms): 0.108544

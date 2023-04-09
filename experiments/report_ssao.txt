@@ -1,0 +1,11 @@
+render mode: ssao
+ao 
+  avg time (ms): 0.277078
+  dev time (ms): 0.00752004
+  min time (ms): 0.26112
+  max time (ms): 0.290816
+blur 
+  avg time (ms): 0.116044
+  dev time (ms): 0.00315053
+  min time (ms): 0.108544
+  max time (ms): 0.120832

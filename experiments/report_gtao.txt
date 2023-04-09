@@ -1,0 +1,11 @@
+render mode: gtao
+ao 
+  avg time (ms): 0.712259
+  dev time (ms): 0.00602686
+  min time (ms): 0.693248
+  max time (ms): 0.722944
+blur 
+  avg time (ms): 0.145031
+  dev time (ms): 0.00113691
+  min time (ms): 0.141312
+  max time (ms): 0.147456
